@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#f3f5fa">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="description" content="MyWallet: personal wallet and expense tracker">
+  <title>MyWallet</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon-64.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preload" href="fonts/montserrat.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="splash"><img src="assets/emblem.webp" alt="MyWallet"></div>
+
+  <div class="app">
+    <main id="view" class="view"></main>
+
+    <nav class="tabbar" aria-label="Main">
+      <button class="tab" data-action="go" data-tab="home"><span class="tab-ic" data-icon="home"></span>Home</button>
+      <button class="tab" data-action="go" data-tab="history"><span class="tab-ic" data-icon="history"></span>History</button>
+      <button class="fab" data-action="add-tx" aria-label="Add transaction"><span class="tab-ic" data-icon="plus"></span></button>
+      <button class="tab" data-action="go" data-tab="stats"><span class="tab-ic" data-icon="stats"></span>Stats</button>
+      <button class="tab" data-action="go" data-tab="settings"><span class="tab-ic" data-icon="settings"></span>Settings</button>
+    </nav>
+  </div>
+
+  <section id="lock" hidden></section>
+  <div id="sheet-root"></div>
+  <div id="dialog-root"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
