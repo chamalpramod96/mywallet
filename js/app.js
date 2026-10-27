@@ -141,6 +141,13 @@ const monthSwitch = (key, ym) => `<div class="month-switch">
 
 const accIcon = a => ACCOUNT_TYPES[a?.type]?.icon || '💼';
 
+// A credit card reads as "Rs 25,000 · Owed" rather than "−Rs 25,000".
+function accBalance(a, bal) {
+  if (a.type !== 'card') return { text: money(bal), note: '' };
+  if (bal < 0) return { text: money(-bal), note: 'Owed' };
+  return { text: money(bal), note: bal > 0 ? 'In credit' : 'Nothing owed' };
+}
+
 function txRow(t, { showDate = false } = {}) {
   const acc = store.account(t.accountId);
   const note = t.note ? ` · ${esc(t.note)}` : '';
@@ -222,14 +229,20 @@ function viewHome() {
   <section class="block">
     <div class="block-head"><h2>Accounts</h2><button class="link-btn" data-action="open-accounts">Manage</button></div>
     <div class="acc-row">
-      ${store.data.accounts.map(a => `<button class="acc-card" data-action="acc-history" data-id="${a.id}">
-        <span class="acc-ico">${accIcon(a)}</span>
-        <span class="acc-name">${esc(a.name)}</span>
-        <span class="acc-bal${bal.get(a.id) < 0 ? ' neg' : ''}">${money(bal.get(a.id))}</span>
-      </button>`).join('')}
+      ${store.data.accounts.map(a => {
+        const b = accBalance(a, bal.get(a.id));
+        return `<button class="acc-card" data-action="acc-history" data-id="${a.id}">
+          <span class="acc-ico">${accIcon(a)}</span>
+          <span class="acc-name">${esc(a.name)}</span>
+          <span class="acc-bal${bal.get(a.id) < 0 ? ' neg' : ''}">${b.text}</span>
+          ${b.note ? `<span class="acc-note">${b.note}</span>` : ''}
+        </button>`;
+      }).join('')}
       <button class="acc-card add" data-action="add-account">${icon('plus')}<span>Add account</span></button>
     </div>
   </section>
+
+  ${loansBlock()}
 
   <section class="block">
     <div class="block-head"><h2>Recent</h2>${recent.length ? '<button class="link-btn" data-action="go" data-tab="history">See all</button>' : ''}</div>
@@ -237,6 +250,38 @@ function viewHome() {
       ? `<ul class="tx-list card">${recent.map(t => txRow(t, { showDate: true })).join('')}</ul>`
       : '<div class="empty card"><div class="empty-ico">🪙</div><p><b>No transactions yet</b>Tap the gold <b>+</b> button to add your first one.</p></div>'}
   </section>`;
+}
+
+function loansBlock() {
+  // Soonest due first; loans without a due date go last, oldest first.
+  const loans = [...store.data.loans].sort((a, b) =>
+    (a.due || '9999-99-99').localeCompare(b.due || '9999-99-99') || a.date.localeCompare(b.date));
+  const { owe, lent } = store.loanTotals();
+  return `<section class="block">
+    <div class="block-head"><h2>Ongoing loans</h2><button class="add-btn" data-action="add-loan">${icon('plus')}Add</button></div>
+    ${loans.length ? `
+      <div class="sum-strip tight">
+        <div><small>You owe</small><b class="neg">${money(owe)}</b></div>
+        <div><small>Owed to you</small><b class="pos">${money(lent)}</b></div>
+      </div>
+      <ul class="tx-list card">${loans.map(loanRow).join('')}</ul>`
+    : `<button class="empty-row card" data-action="add-loan">${icon('plus')}<span><b>No ongoing loans</b>Tap to note money you borrowed or lent. Remove it when it's settled.</span></button>`}
+  </section>`;
+}
+
+function loanRow(l) {
+  const overdue = l.due && l.due < todayStr();
+  const day = ds => dayLabel(ds).replace(/^(Today|Yesterday)$/, s => s.toLowerCase());
+  const when = l.due ? `${overdue ? 'Overdue since' : 'Due'} ${day(l.due)}` : `Since ${day(l.date)}`;
+  const owe = l.direction === 'owe';
+  return `<li><button class="tx loan" data-action="edit-loan" data-id="${l.id}">
+    <span class="tx-ico">${owe ? '🧾' : '🤝'}</span>
+    <span class="tx-main">
+      <span class="tx-title">${esc(l.name)}</span>
+      <span class="tx-sub${overdue ? ' overdue' : ''}">${owe ? 'You owe' : 'Owes you'} · ${when}${l.note ? ` · ${esc(l.note)}` : ''}</span>
+    </span>
+    <span class="tx-amt ${owe ? 'owe' : 'lent'}">${money(l.amount)}</span>
+  </button></li>`;
 }
 
 function budgetMeter(spent) {
@@ -685,44 +730,62 @@ function openAccounts() {
   const bal = store.balances();
   openSheet(`${sheetHead('Accounts')}
   <div class="sheet-body">
-    <ul class="list card">${store.data.accounts.map(a => row({
-      action: 'edit-account', id: a.id, ico: accIcon(a), label: esc(a.name), sub: ACCOUNT_TYPES[a.type].label, val: money(bal.get(a.id)),
-    })).join('')}</ul>
+    <ul class="list card">${store.data.accounts.map(a => {
+      const b = accBalance(a, bal.get(a.id));
+      return row({ action: 'edit-account', id: a.id, ico: accIcon(a), label: esc(a.name), sub: [ACCOUNT_TYPES[a.type].label, b.note].filter(Boolean).join(' · '), val: b.text });
+    }).join('')}</ul>
     <p class="hint">Total across all accounts: <b>${money(store.totalBalance(bal))}</b></p>
   </div>
   <div class="sheet-foot"><button class="btn primary grow" data-action="add-account" data-from="list">${icon('plus')} Add account</button></div>`);
 }
 
+// Card accounts are entered and shown as "amount you owe" (the stored balance is negative).
+const ACC_BAL_TEXT = {
+  card: { label: 'Amount you owe', hint: 'What\'s outstanding on this card now. Card purchases add to it. Paying the bill is a Transfer from your bank to this card.' },
+  other: { label: 'Current balance', hint: 'What\'s in this account right now. Tap ± if it\'s overdrawn.' },
+};
+
+function syncAccBalText() {
+  const t = ACC_BAL_TEXT[accf.type === 'card' ? 'card' : 'other'];
+  $('#a-bal-label').textContent = t.label;
+  $('#a-bal-hint').textContent = t.hint;
+  $('#a-bal-sign').hidden = accf.type === 'card';
+}
+
 function openAccountForm(acc, fromList) {
+  const type = acc?.type ?? 'bank';
   const bal = acc ? store.balances().get(acc.id) : 0;
-  accf = { acc, type: acc?.type ?? 'bank', fromList };
+  const shown = type === 'card' ? -bal : bal;
+  accf = { acc, type, fromList };
   openSheet(`${sheetHead(acc ? 'Edit account' : 'New account', fromList ? 'open-accounts' : null)}
   <div class="sheet-body">
     <label class="field"><span>Name</span><input id="a-name" type="text" maxlength="24" placeholder="e.g. BOC Savings" value="${esc(acc?.name ?? '')}" autocomplete="off"></label>
     <div class="f-label">Type</div>
     <div class="chip-row wrap">${Object.entries(ACCOUNT_TYPES).map(([k, v]) =>
       `<button class="chip${accf.type === k ? ' on' : ''}" data-action="acc-type" data-type="${k}">${v.icon} ${v.label}</button>`).join('')}</div>
-    <div class="field"><span>Current balance</span>
+    <div class="field"><span id="a-bal-label"></span>
       <div class="input-pre">
         <b>${esc(curPrefix().trim())}</b>
-        <input id="a-bal" inputmode="decimal" data-money="neg" placeholder="0" value="${bal ? amountStr(bal) : ''}" autocomplete="off" aria-label="Current balance">
-        <button class="sign-btn" data-action="toggle-sign" data-for="a-bal" aria-label="Switch between plus and minus">±</button>
+        <input id="a-bal" inputmode="decimal" data-money="neg" placeholder="0" value="${shown ? amountStr(shown) : ''}" autocomplete="off" aria-labelledby="a-bal-label">
+        <button class="sign-btn" id="a-bal-sign" data-action="toggle-sign" data-for="a-bal" aria-label="Switch between plus and minus">±</button>
       </div>
     </div>
-    <p class="hint">What's in this account right now. Tap ± for money you owe, like a credit card balance.</p>
+    <p class="hint" id="a-bal-hint"></p>
   </div>
   <div class="sheet-foot">
     ${acc ? `<button class="btn ghost icon-only" data-action="acc-delete" aria-label="Delete account">${icon('trash')}</button>` : ''}
     <button class="btn primary grow" data-action="acc-save">${acc ? 'Save' : 'Add account'}</button>
   </div>`, { focus: acc ? null : '#a-name' });
+  syncAccBalText();
 }
 
 function saveAccount() {
   const name = $('#a-name').value.trim();
   if (!name) return formError('#a-name', 'Give the account a name');
   const raw = $('#a-bal').value.trim();
-  const target = raw ? parseAmount(raw, { allowNegative: true }) : 0;
+  let target = raw ? parseAmount(raw, { allowNegative: true }) : 0;
   if (Number.isNaN(target)) return formError('#a-bal', 'Enter a valid balance');
+  if (accf.type === 'card') target = -target;
   let { acc } = accf;
   if (!acc) {
     acc = { id: uid(), name, type: accf.type, opening: 0 };
@@ -758,6 +821,74 @@ async function deleteAccount() {
   if (accf.fromList) openAccounts();
   else closeSheet();
   toast('Account deleted');
+}
+
+/* =====================================================================
+   Ongoing loans
+   ===================================================================== */
+let loanf = null;
+const LOAN_DIRS = { owe: { tab: 'I borrowed', who: 'Borrowed from' }, lent: { tab: 'I lent', who: 'Lent to' } };
+
+function openLoanForm(loan = null) {
+  loanf = { loan, direction: loan?.direction ?? 'owe' };
+  openSheet(`${sheetHead(loan ? 'Edit loan' : 'New loan')}
+  <div class="sheet-body">
+    <div class="seg two">${Object.entries(LOAN_DIRS).map(([k, d]) =>
+      `<button class="seg-btn${loanf.direction === k ? ' on' : ''}" data-action="loan-dir" data-dir="${k}">${d.tab}</button>`).join('')}</div>
+    <label class="amount"><span class="amount-cur">${esc(store.s.currency)}</span><input id="l-amt" inputmode="decimal" data-money placeholder="0" value="${loan ? amountStr(loan.amount) : ''}" autocomplete="off" aria-label="Amount still to settle"></label>
+    <p class="hint top">Amount still to settle. Lower it when part is paid back.</p>
+    <label class="field"><span id="l-who">${LOAN_DIRS[loanf.direction].who}</span><input id="l-name" type="text" maxlength="40" placeholder="e.g. HNB personal loan, Kasun" value="${esc(loan?.name ?? '')}" autocomplete="off"></label>
+    <div class="f-row">
+      <label class="field"><span>Date</span><input id="l-date" type="date" value="${loan?.date ?? todayStr()}"></label>
+      <label class="field"><span>Due (optional)</span><input id="l-due" type="date" value="${loan?.due ?? ''}"></label>
+    </div>
+    <label class="field"><span>Note</span><input id="l-note" type="text" maxlength="80" placeholder="Optional" value="${esc(loan?.note ?? '')}" autocomplete="off"></label>
+  </div>
+  <div class="sheet-foot">
+    ${loan ? `<button class="btn gold" data-action="loan-settle">${icon('check')}Settled</button>` : ''}
+    <button class="btn primary grow" data-action="loan-save">${loan ? 'Save' : 'Add loan'}</button>
+  </div>`, { focus: loan ? null : '#l-amt' });
+}
+
+function saveLoan() {
+  const amount = parseAmount($('#l-amt').value);
+  if (!(amount > 0)) return formError('#l-amt', 'Enter the amount still to settle');
+  const name = $('#l-name').value.trim();
+  if (!name) return formError('#l-name', loanf.direction === 'owe' ? 'Who did you borrow from?' : 'Who did you lend to?');
+  const date = $('#l-date').value || todayStr();
+  const due = $('#l-due').value || null;
+  if (due && due < date) return formError('#l-due', 'The due date is before the loan date');
+  const { loan } = loanf;
+  const rec = {
+    id: loan?.id ?? uid(), direction: loanf.direction, name, amount, date, due,
+    note: $('#l-note').value.trim().slice(0, 80), createdAt: loan?.createdAt ?? Date.now(),
+  };
+  const list = store.data.loans;
+  const i = list.findIndex(l => l.id === rec.id);
+  if (i >= 0) list[i] = rec;
+  else list.push(rec);
+  if (!persist()) return;
+  closeSheet();
+  render();
+  toast(loan ? 'Loan updated' : 'Loan added');
+}
+
+async function settleLoan() {
+  const { loan } = loanf;
+  const ok = await confirmDialog({
+    title: 'Mark as settled?',
+    message: `${esc(loan.name)} (${money(loan.amount, { mask: false })}) will be removed from your ongoing loans.`,
+    ok: 'Settled',
+  });
+  if (!ok) return;
+  store.data.loans = store.data.loans.filter(l => l.id !== loan.id);
+  persist();
+  closeSheet();
+  render();
+  toast('Loan settled and removed', {
+    action: 'Undo',
+    onAction: () => { store.data.loans.push(loan); persist(); render(); },
+  });
 }
 
 /* =====================================================================
@@ -1066,7 +1197,7 @@ function drawLock() {
       <p class="lock-sub left">How much do you have right now? You can change this later in Settings.</p>
       <div class="f-label">Currency</div>
       <div class="chip-row wrap">${CURRENCIES.map(c => `<button class="chip${store.s.currency === c ? ' on' : ''}" data-lock="cur" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
-      ${store.data.accounts.map(a => `<label class="field"><span>${accIcon(a)} ${a.type === 'cash' ? 'Cash in hand' : `${esc(a.name)} balance`}</span>
+      ${store.data.accounts.map(a => `<label class="field"><span>${accIcon(a)} ${a.type === 'cash' ? 'Cash in hand' : a.type === 'card' ? `${esc(a.name)}: amount you owe` : `${esc(a.name)} balance`}</span>
         <input class="input setup-bal" data-id="${a.id}" inputmode="decimal" data-money placeholder="0" autocomplete="off"></label>`).join('')}
       <div class="lock-bottom"><button class="btn gold block" data-lock="finish">Start using MyWallet</button></div>
     </div>`;
@@ -1207,7 +1338,8 @@ function lockAction(action, el) {
       for (const input of $$('.setup-bal')) {
         const v = input.value.trim() ? parseAmount(input.value) : 0;
         if (Number.isNaN(v)) return formError(`.setup-bal[data-id="${input.dataset.id}"]`, 'Enter a valid amount');
-        store.account(input.dataset.id).opening = v;
+        const acc = store.account(input.dataset.id);
+        acc.opening = acc.type === 'card' ? -v : v; // a card balance is money owed
       }
       store.s.onboarded = true;
       persist();
@@ -1276,13 +1408,35 @@ const ACTIONS = {
   'open-accounts': openAccounts,
   'add-account': el => openAccountForm(null, el.dataset.from === 'list'),
   'edit-account': el => openAccountForm(store.account(el.dataset.id), true),
-  'acc-type': el => { accf.type = el.dataset.type; selectIn(el); },
+  'acc-type': el => {
+    const wasCard = accf.type === 'card';
+    accf.type = el.dataset.type;
+    selectIn(el);
+    if (wasCard === (accf.type === 'card')) return;
+    // Owed <-> balance: keep the same money, flip how it's written.
+    const input = $('#a-bal');
+    if (input.value) input.value = input.value.startsWith('-') ? input.value.slice(1) : `-${input.value}`;
+    syncAccBalText();
+  },
   'acc-save': saveAccount,
   'acc-delete': deleteAccount,
   'toggle-sign': el => {
     const input = $(`#${el.dataset.for}`);
     input.value = input.value.startsWith('-') ? input.value.slice(1) : `-${input.value}`;
   },
+
+  'add-loan': () => openLoanForm(),
+  'edit-loan': el => {
+    const l = store.data.loans.find(x => x.id === el.dataset.id);
+    if (l) openLoanForm(l);
+  },
+  'loan-dir': el => {
+    loanf.direction = el.dataset.dir;
+    selectIn(el);
+    $('#l-who').textContent = LOAN_DIRS[loanf.direction].who;
+  },
+  'loan-save': saveLoan,
+  'loan-settle': settleLoan,
 
   'open-categories': openCategories,
   'cat-tab': el => { catType = el.dataset.type; openCategories(); },

@@ -2,7 +2,9 @@
 
 A personal wallet and expense tracker, built to be used on one phone (Samsung Galaxy S25) and installed from GitHub Pages.
 
-- Track expenses, income and transfers across accounts (cash, bank, card, savings, e-wallet)
+- Track expenses, income and transfers across accounts. It starts with Cash, HNB, BOC and HNB Credit Card (only balances, no account numbers)
+- Credit card shows the amount you owe: card purchases add to it, and paying the bill is a **Transfer** from HNB or BOC to the card
+- **Ongoing loans** on Home: tap **+ Add** for money you borrowed or lent, lower the amount as it's paid back, tap **Settled** to remove it
 - Monthly budget, spending by category, 6-month income vs expenses chart
 - 4-digit PIN lock with auto-lock
 - Works offline once installed

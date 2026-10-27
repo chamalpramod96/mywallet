@@ -1,6 +1,6 @@
 // Data layer: everything lives in this phone's localStorage. Amounts are integer cents.
 const KEY = 'mywallet.v1';
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -9,6 +9,7 @@ const pad = n => String(n).padStart(2, '0');
 export const dateStr = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 export const todayStr = () => dateStr(new Date());
 export const ymOf = s => s.slice(0, 7);
+const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s ?? '');
 export const thisYm = () => ymOf(todayStr());
 export function parseDate(s) {
   const [y, m, d] = s.split('-').map(Number);
@@ -83,10 +84,13 @@ export function defaultData() {
     settings: { ...DEFAULT_SETTINGS },
     accounts: [
       { id: uid(), name: 'Cash', type: 'cash', opening: 0 },
-      { id: uid(), name: 'Bank', type: 'bank', opening: 0 },
+      { id: uid(), name: 'HNB', type: 'bank', opening: 0 },
+      { id: uid(), name: 'BOC', type: 'bank', opening: 0 },
+      { id: uid(), name: 'HNB Credit Card', type: 'card', opening: 0 },
     ],
     categories: [...EXPENSE_CATS.map(cat('expense')), ...INCOME_CATS.map(cat('income'))],
     tx: [],
+    loans: [],
   };
 }
 
@@ -100,12 +104,20 @@ export function normalize(d) {
     .filter(c => c && c.id && (c.type === 'expense' || c.type === 'income'))
     .map(c => ({ id: String(c.id), name: String(c.name || 'Category'), emoji: String(c.emoji || '📦'), type: c.type }));
   const tx = (Array.isArray(d.tx) ? d.tx : [])
-    .filter(t => t && t.id && ['expense', 'income', 'transfer'].includes(t.type) && /^\d{4}-\d{2}-\d{2}$/.test(t.date))
+    .filter(t => t && t.id && ['expense', 'income', 'transfer'].includes(t.type) && isDate(t.date))
     .map(t => ({
       id: String(t.id), type: t.type, amount: Math.abs(int(t.amount)), accountId: String(t.accountId),
       toAccountId: t.type === 'transfer' ? String(t.toAccountId) : null,
       categoryId: t.type === 'transfer' ? null : String(t.categoryId), date: t.date,
       note: String(t.note || '').slice(0, 120), createdAt: int(t.createdAt) || Date.now(),
+    }));
+  // Ongoing loans are a plain list: they don't move account balances.
+  const loans = (Array.isArray(d.loans) ? d.loans : [])
+    .filter(l => l && l.id && (l.direction === 'owe' || l.direction === 'lent'))
+    .map(l => ({
+      id: String(l.id), direction: l.direction, name: String(l.name || 'Loan').slice(0, 40), amount: Math.abs(int(l.amount)),
+      date: isDate(l.date) ? l.date : todayStr(), due: isDate(l.due) ? l.due : null,
+      note: String(l.note || '').slice(0, 80), createdAt: int(l.createdAt) || Date.now(),
     }));
   return {
     version: 1,
@@ -114,6 +126,7 @@ export function normalize(d) {
     accounts,
     categories,
     tx,
+    loans,
   };
 }
 
@@ -209,6 +222,15 @@ export const store = {
       const c = this.category(id);
       return { id, amount, name: c?.name ?? 'Uncategorised', emoji: c?.emoji ?? '❔' };
     }).sort((a, b) => b.amount - a.amount);
+  },
+
+  loanTotals() {
+    let owe = 0, lent = 0;
+    for (const l of this.data.loans) {
+      if (l.direction === 'owe') owe += l.amount;
+      else lent += l.amount;
+    }
+    return { owe, lent };
   },
 
   txCountFor({ accountId, categoryId }) {

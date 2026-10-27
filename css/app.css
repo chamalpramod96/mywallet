@@ -205,7 +205,10 @@ body.locked .view, body.locked .tabbar { visibility: hidden; }
 .banner p b { display: block; color: var(--ink); font-size: 14px; }
 
 .block { margin-top: 24px; }
-.block-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 10px; }
+.block-head { display: flex; align-items: center; justify-content: space-between; min-height: 32px; margin: 0 2px 10px; }
+.add-btn { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 13px 0 9px; border-radius: 99px; background: var(--gold-grad); color: #0a2a5e; font-size: 13.5px; font-weight: 700; }
+.add-btn .ic { width: 17px; height: 17px; stroke-width: 2.5; }
+.add-btn:active { transform: scale(.96); }
 .block-head h2, .card-head h2 { font-family: var(--font-display); font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .card.pad { padding: 16px; margin-top: 14px; }
@@ -219,6 +222,7 @@ body.locked .view, body.locked .tabbar { visibility: hidden; }
 .acc-name { font-size: 13px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acc-bal { font-family: var(--font-display); font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acc-bal.neg { color: var(--danger); }
+.acc-note { font-size: 11.5px; font-weight: 600; color: var(--muted); }
 .acc-card.add { width: 112px; align-items: center; justify-content: center; gap: 6px; border-style: dashed; border-color: var(--surface-3); box-shadow: none; background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; }
 
 /* ---------- transaction rows ---------- */
@@ -234,7 +238,14 @@ body.locked .view, body.locked .tabbar { visibility: hidden; }
 .tx-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tx-sub { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tx-amt { flex: none; font-family: var(--font-display); font-weight: 700; font-size: 14.5px; font-variant-numeric: tabular-nums; }
-.tx-amt.in { color: var(--in); }
+.tx-amt.in, .tx-amt.lent { color: var(--in); }
+.tx-amt.owe { color: var(--danger); }
+.tx-sub.overdue { color: var(--danger); font-weight: 600; }
+.tx.loan .tx-sub { white-space: normal; } /* the due date must not be cut off */
+.empty-row { width: 100%; display: flex; align-items: center; gap: 12px; padding: 14px; text-align: left; color: var(--ink-2); font-size: 13px; line-height: 1.35; }
+.empty-row > .ic { width: 42px; height: 42px; padding: 11px; border-radius: 14px; background: color-mix(in srgb, var(--gold) 16%, var(--surface)); color: var(--gold-ink); stroke-width: 2.2; }
+.empty-row b { display: block; margin-bottom: 1px; color: var(--ink); font-size: 14.5px; }
+.empty-row:active { background: var(--surface-2); }
 
 .empty { padding: 28px 20px; text-align: center; color: var(--ink-2); font-size: 14px; }
 .empty-ico { font-size: 34px; margin-bottom: 6px; }
@@ -290,6 +301,8 @@ body:has(.view input:focus) .tabbar { display: none; }
 .sum-strip small { display: block; color: var(--muted); font-size: 12px; font-weight: 600; }
 .sum-strip b { display: block; font-family: var(--font-display); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sum-strip b.pos { color: var(--in); }
+.sum-strip b.neg { color: var(--danger); }
+.sum-strip.tight { margin: 0 0 10px; }
 
 .day { margin-top: 18px; }
 .day-head { display: flex; justify-content: space-between; gap: 8px; margin: 0 4px 8px; color: var(--muted); font-size: 13px; font-weight: 600; }
@@ -411,6 +424,8 @@ body:has(.view input:focus) .tabbar { display: none; }
 .date-row { display: flex; gap: 8px; align-items: center; }
 .date-row .input { flex: 1; min-width: 0; height: 38px; border-radius: 99px; padding: 0 12px; font-size: 14px; }
 .field { display: block; margin-top: 16px; }
+.f-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.f-row .field { min-width: 0; }
 .field > span { display: block; margin: 0 2px 6px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
 .field input, .input { width: 100%; height: 48px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); font-size: 16px; outline: 0; }
 .field input:focus, .input:focus { border-color: var(--gold-2); background: var(--surface); }
