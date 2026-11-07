@@ -1,6 +1,6 @@
 // Data layer: everything lives in this phone's localStorage. Amounts are integer cents.
 const KEY = 'mywallet.v1';
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.1.1';
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -74,7 +74,11 @@ const DEFAULT_SETTINGS = {
   lastAccount: null,
   lastBackup: null,
   nudgeDismissed: null,
+  pinFails: 0, // wrong PINs in a row; kept here so closing the app doesn't reset the wait
+  pinUntil: 0, // no PIN is accepted before this time (ms)
 };
+const THEME_VALUES = ['system', 'light', 'dark'];
+const AUTOLOCK_VALUES = [0, 1, 5, 15, -1];
 
 export function defaultData() {
   const cat = type => ([name, emoji]) => ({ id: uid(), name, emoji, type });
@@ -94,35 +98,69 @@ export function defaultData() {
   };
 }
 
+// Ids only ever hold letters, digits, "_" and "-" (see uid), so they are safe to put in HTML.
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const cleanId = v => (ID_RE.test(String(v ?? '')) ? String(v) : null);
+const isTime = v => typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v));
+
+// Every setting is checked, so a damaged save or a crafted backup can't break the app.
+function cleanSettings(v) {
+  const s = v && typeof v === 'object' ? v : {};
+  const bool = (x, d) => (typeof x === 'boolean' ? x : d);
+  const text = x => (typeof x === 'string' && x.length <= 200 ? x : null);
+  const count = x => (Number.isInteger(x) && x >= 0 && x <= 1e15 ? x : 0);
+  const currency = typeof s.currency === 'string' ? s.currency.trim().slice(0, 8) : '';
+  return {
+    onboarded: bool(s.onboarded, false),
+    currency: currency || DEFAULT_SETTINGS.currency,
+    decimals: s.decimals === 0 ? 0 : 2,
+    theme: THEME_VALUES.includes(s.theme) ? s.theme : 'system',
+    autoLock: AUTOLOCK_VALUES.includes(s.autoLock) ? s.autoLock : DEFAULT_SETTINGS.autoLock,
+    hideAmounts: bool(s.hideAmounts, false),
+    budget: Number.isInteger(s.budget) && s.budget >= 0 && s.budget <= MAX_CENTS ? s.budget : 0,
+    pinHash: text(s.pinHash),
+    pinSalt: text(s.pinSalt),
+    lastAccount: cleanId(s.lastAccount),
+    lastBackup: isTime(s.lastBackup) ? s.lastBackup : null,
+    nudgeDismissed: isTime(s.nudgeDismissed) ? s.nudgeDismissed : null,
+    pinFails: count(s.pinFails),
+    pinUntil: count(s.pinUntil),
+  };
+}
+
 // Fills gaps so older saves and imported backups always have every field.
+// Records with a damaged or unexpected id are dropped.
 export function normalize(d) {
   const int = v => (Number.isFinite(+v) ? Math.round(+v) : 0);
-  const accounts = (Array.isArray(d.accounts) ? d.accounts : [])
-    .filter(a => a && a.id)
-    .map(a => ({ id: String(a.id), name: String(a.name || 'Account'), type: ACCOUNT_TYPES[a.type] ? a.type : 'cash', opening: int(a.opening) }));
-  const categories = (Array.isArray(d.categories) ? d.categories : [])
-    .filter(c => c && c.id && (c.type === 'expense' || c.type === 'income'))
-    .map(c => ({ id: String(c.id), name: String(c.name || 'Category'), emoji: String(c.emoji || '📦'), type: c.type }));
-  const tx = (Array.isArray(d.tx) ? d.tx : [])
-    .filter(t => t && t.id && ['expense', 'income', 'transfer'].includes(t.type) && isDate(t.date))
+  const amt = v => Math.min(Math.abs(int(v)), MAX_CENTS);
+  const str = (v, d, max) => String(v || d).slice(0, max);
+  const list = v => (Array.isArray(v) ? v : []).filter(x => x && typeof x === 'object' && cleanId(x.id));
+  const accounts = list(d.accounts)
+    .map(a => ({ id: String(a.id), name: str(a.name, 'Account', 40), type: ACCOUNT_TYPES[a.type] ? a.type : 'cash', opening: Math.max(-MAX_CENTS, Math.min(MAX_CENTS, int(a.opening))) }));
+  const categories = list(d.categories)
+    .filter(c => c.type === 'expense' || c.type === 'income')
+    .map(c => ({ id: String(c.id), name: str(c.name, 'Category', 40), emoji: str(c.emoji, '📦', 16), type: c.type }));
+  const tx = list(d.tx)
+    .filter(t => ['expense', 'income', 'transfer'].includes(t.type) && isDate(t.date) && cleanId(t.accountId)
+      && (t.type !== 'transfer' || cleanId(t.toAccountId)))
     .map(t => ({
-      id: String(t.id), type: t.type, amount: Math.abs(int(t.amount)), accountId: String(t.accountId),
+      id: String(t.id), type: t.type, amount: amt(t.amount), accountId: String(t.accountId),
       toAccountId: t.type === 'transfer' ? String(t.toAccountId) : null,
-      categoryId: t.type === 'transfer' ? null : String(t.categoryId), date: t.date,
+      categoryId: t.type === 'transfer' ? null : cleanId(t.categoryId), date: t.date,
       note: String(t.note || '').slice(0, 120), createdAt: int(t.createdAt) || Date.now(),
     }));
   // Ongoing loans are a plain list: they don't move account balances.
-  const loans = (Array.isArray(d.loans) ? d.loans : [])
-    .filter(l => l && l.id && (l.direction === 'owe' || l.direction === 'lent'))
+  const loans = list(d.loans)
+    .filter(l => l.direction === 'owe' || l.direction === 'lent')
     .map(l => ({
-      id: String(l.id), direction: l.direction, name: String(l.name || 'Loan').slice(0, 40), amount: Math.abs(int(l.amount)),
+      id: String(l.id), direction: l.direction, name: str(l.name, 'Loan', 40), amount: amt(l.amount),
       date: isDate(l.date) ? l.date : todayStr(), due: isDate(l.due) ? l.due : null,
       note: String(l.note || '').slice(0, 80), createdAt: int(l.createdAt) || Date.now(),
     }));
   return {
     version: 1,
-    createdAt: d.createdAt || new Date().toISOString(),
-    settings: { ...DEFAULT_SETTINGS, ...(d.settings || {}) },
+    createdAt: isTime(d.createdAt) ? d.createdAt : new Date().toISOString(),
+    settings: cleanSettings(d.settings),
     accounts,
     categories,
     tx,
@@ -143,18 +181,42 @@ export function validateBackup(obj) {
 /* ---------- store ---------- */
 export const store = {
   data: null,
+  KEY,
+
+  // Unreadable data is never deleted: it is kept under "mywallet.v1.corrupt-<time>".
+  get corrupt() {
+    try {
+      return Object.keys(localStorage).some(k => k.startsWith(`${KEY}.corrupt-`));
+    } catch {
+      return false;
+    }
+  },
 
   get s() { return this.data.settings; },
 
   load() {
+    let raw = null;
     try {
-      const raw = localStorage.getItem(KEY);
-      this.data = raw ? normalize(JSON.parse(raw)) : null;
+      raw = localStorage.getItem(KEY);
+      const d = raw ? JSON.parse(raw) : null;
+      if (raw && (!d || typeof d !== 'object')) throw new Error('Saved data is not an object');
+      this.data = d ? normalize(d) : null;
     } catch (e) {
       console.error('Could not read saved data', e);
       this.data = null;
+      // Keep the unreadable copy aside, so starting again can't overwrite it.
+      if (raw) this.keepCorrupt(raw);
     }
     return this.data;
+  },
+
+  keepCorrupt(raw) {
+    try {
+      localStorage.setItem(`${KEY}.corrupt-${Date.now()}`, raw);
+      localStorage.removeItem(KEY);
+    } catch (e) {
+      console.error('Could not keep the unreadable data', e);
+    }
   },
 
   save() {
@@ -173,7 +235,8 @@ export const store = {
   },
 
   wipe() {
-    localStorage.removeItem(KEY);
+    // Removes the data and any unreadable copies kept aside.
+    for (const k of Object.keys(localStorage)) if (k === KEY || k.startsWith(`${KEY}.`)) localStorage.removeItem(k);
     this.data = null;
   },
 

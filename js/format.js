@@ -8,17 +8,19 @@ const nf = d => {
   return nfCache.get(d);
 };
 
-// "Rs" -> "Rs 1,250.00", "$" -> "$1,250.00"
+// "Rs" -> "Rs 1,250.00", "$" -> "$1,250.00". Plain text: escape it before putting it in HTML.
 export function curPrefix() {
   const c = store.s.currency || '';
   return /\p{L}$/u.test(c) ? c + ' ' : c;
 }
 
+// Returns HTML: the currency symbol is escaped, the rest is digits and signs.
 export function money(cents, { sign = false, mask = true } = {}) {
-  if (mask && store.s.hideAmounts) return `${curPrefix()}••••`;
+  const cur = esc(curPrefix());
+  if (mask && store.s.hideAmounts) return `${cur}••••`;
   const neg = cents < 0;
   const pre = neg ? '−' : sign && cents > 0 ? '+' : '';
-  return `${pre}${curPrefix()}${nf(store.s.decimals).format(Math.abs(cents) / 100)}`;
+  return `${pre}${cur}${nf(store.s.decimals === 0 ? 0 : 2).format(Math.abs(cents) / 100)}`;
 }
 
 // Whole-unit figure without the currency, for tight table columns: 125050 -> "1,251"

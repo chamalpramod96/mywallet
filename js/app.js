@@ -154,7 +154,7 @@ function txRow(t, { showDate = false } = {}) {
   const when = showDate ? `${dayLabel(t.date)} · ` : '';
   if (t.type === 'transfer') {
     const to = store.account(t.toAccountId);
-    return `<li><button class="tx" data-action="edit-tx" data-id="${t.id}">
+    return `<li><button class="tx" data-action="edit-tx" data-id="${esc(t.id)}">
       <span class="tx-ico transfer">${icon('swap')}</span>
       <span class="tx-main"><span class="tx-title">Transfer</span><span class="tx-sub">${when}${esc(acc?.name ?? '?')} → ${esc(to?.name ?? '?')}${note}</span></span>
       <span class="tx-amt">${money(t.amount)}</span>
@@ -162,7 +162,7 @@ function txRow(t, { showDate = false } = {}) {
   }
   const c = store.category(t.categoryId);
   const inc = t.type === 'income';
-  return `<li><button class="tx" data-action="edit-tx" data-id="${t.id}">
+  return `<li><button class="tx" data-action="edit-tx" data-id="${esc(t.id)}">
     <span class="tx-ico">${esc(c?.emoji ?? '❔')}</span>
     <span class="tx-main"><span class="tx-title">${esc(c?.name ?? 'Uncategorised')}</span><span class="tx-sub">${when}${esc(acc?.name ?? '?')}${note}</span></span>
     <span class="tx-amt${inc ? ' in' : ''}">${money(inc ? t.amount : -t.amount, { sign: inc })}</span>
@@ -231,7 +231,7 @@ function viewHome() {
     <div class="acc-row">
       ${store.data.accounts.map(a => {
         const b = accBalance(a, bal.get(a.id));
-        return `<button class="acc-card" data-action="acc-history" data-id="${a.id}">
+        return `<button class="acc-card" data-action="acc-history" data-id="${esc(a.id)}">
           <span class="acc-ico">${accIcon(a)}</span>
           <span class="acc-name">${esc(a.name)}</span>
           <span class="acc-bal${bal.get(a.id) < 0 ? ' neg' : ''}">${b.text}</span>
@@ -274,7 +274,7 @@ function loanRow(l) {
   const day = ds => dayLabel(ds).replace(/^(Today|Yesterday)$/, s => s.toLowerCase());
   const when = l.due ? `${overdue ? 'Overdue since' : 'Due'} ${day(l.due)}` : `Since ${day(l.date)}`;
   const owe = l.direction === 'owe';
-  return `<li><button class="tx loan" data-action="edit-loan" data-id="${l.id}">
+  return `<li><button class="tx loan" data-action="edit-loan" data-id="${esc(l.id)}">
     <span class="tx-ico">${owe ? '🧾' : '🤝'}</span>
     <span class="tx-main">
       <span class="tx-title">${esc(l.name)}</span>
@@ -641,7 +641,7 @@ function readTxInputs() {
 function drawTxForm(focus = false) {
   const { f, editing } = txf;
   const accChips = (sel, action) => store.data.accounts.map(a =>
-    `<button class="chip${sel === a.id ? ' on' : ''}" data-action="${action}" data-id="${a.id}">${accIcon(a)} ${esc(a.name)}</button>`).join('');
+    `<button class="chip${sel === a.id ? ' on' : ''}" data-action="${action}" data-id="${esc(a.id)}">${accIcon(a)} ${esc(a.name)}</button>`).join('');
   const today = todayStr(), yest = addDays(today, -1);
   openSheet(`${sheetHead(editing ? 'Edit transaction' : 'New transaction')}
   <div class="sheet-body">
@@ -653,7 +653,7 @@ function drawTxForm(focus = false) {
     </label>
     ${f.type === 'transfer' ? '' : `<div class="f-label">Category</div>
     <div class="cat-grid">${store.categoriesOf(f.type).map(c =>
-      `<button class="cat${f.categoryId === c.id ? ' on' : ''}" data-action="tx-cat" data-id="${c.id}"><span class="cat-emoji">${esc(c.emoji)}</span><span class="cat-name">${esc(c.name)}</span></button>`).join('')}</div>`}
+      `<button class="cat${f.categoryId === c.id ? ' on' : ''}" data-action="tx-cat" data-id="${esc(c.id)}"><span class="cat-emoji">${esc(c.emoji)}</span><span class="cat-name">${esc(c.name)}</span></button>`).join('')}</div>`}
     <div class="f-label">${f.type === 'transfer' ? 'From' : 'Account'}</div>
     <div class="chip-row" data-group="tx-acc">${accChips(f.accountId, 'tx-acc')}</div>
     ${f.type === 'transfer' ? `<div class="f-label">To</div><div class="chip-row" data-group="tx-to">${accChips(f.toAccountId, 'tx-to')}</div>` : ''}
@@ -1005,7 +1005,7 @@ function openCurrency() {
 }
 
 function setCurrency(c) {
-  c = c.trim();
+  c = c.trim().slice(0, 8);
   if (!c) return formError('#cur-custom', 'Type a symbol');
   store.s.currency = c;
   persist();
@@ -1037,7 +1037,7 @@ async function install() {
    Backup
    ===================================================================== */
 function backupJson() {
-  const { pinHash, pinSalt, ...settings } = store.s; // the PIN never leaves the phone
+  const { pinHash, pinSalt, pinFails, pinUntil, ...settings } = store.s; // the PIN never leaves the phone
   return JSON.stringify({ app: 'MyWallet', format: 1, exportedAt: new Date().toISOString(), data: { ...store.data, settings } });
 }
 
@@ -1092,7 +1092,8 @@ function importBackup() {
       danger: true,
     });
     if (!ok) return;
-    const keep = { pinHash: store.s.pinHash, pinSalt: store.s.pinSalt, onboarded: true };
+    const { pinHash, pinSalt, pinFails, pinUntil } = store.s;
+    const keep = { pinHash, pinSalt, pinFails, pinUntil, onboarded: true };
     store.data = data;
     Object.assign(store.s, keep);
     Object.assign(ui, { histAccount: null, histCategory: null, histQuery: '' });
@@ -1134,8 +1135,21 @@ async function eraseAll() {
 /* =====================================================================
    Lock screen: onboarding, PIN create/verify/unlock
    ===================================================================== */
-const lock = { purpose: null, mode: null, entry: '', first: '', msg: '', attempts: 0, until: 0, busy: false };
+const lock = { purpose: null, mode: null, entry: '', first: '', msg: '', busy: false };
 const PIN_MODES = ['unlock', 'verify', 'create', 'confirm'];
+const CHECK_MODES = ['unlock', 'verify']; // modes that check the saved PIN
+
+/* Wrong PINs are counted in settings, so restarting the app doesn't reset the wait.
+   5 wrong in a row: wait 30s, then each further wrong PIN doubles it, up to 30 minutes. */
+const MAX_WAIT = 30 * 60000;
+const pinWait = fails => (fails < 5 ? 0 : Math.min(30000 * 2 ** (fails - 5), MAX_WAIT));
+function pinWaitLeft() {
+  const s = store.s;
+  // If the phone clock was moved back, never ask for more than the longest wait.
+  if (s.pinUntil - Date.now() > MAX_WAIT) { s.pinUntil = Date.now() + MAX_WAIT; persist(); }
+  return Math.max(0, s.pinUntil - Date.now());
+}
+const waitText = sec => (sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`);
 
 const randomSalt = () => [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
 
@@ -1180,6 +1194,7 @@ function drawLock() {
   if (m === 'welcome') {
     el.innerHTML = `<div class="lock-inner">
       <div class="lock-brand">${brand('lg')}<p class="lock-tag">Your money, always in your pocket.</p></div>
+      ${store.corrupt ? `<p class="lock-warn">${icon('alert')}<span>Your saved data couldn't be read. A copy was kept on this phone. To bring your data back, tap Get started, then <b>Settings → Restore from backup</b>.</span></p>` : ''}
       <ul class="features">
         <li><span class="f-ico">${icon('shield')}</span><span><b>Private</b>Everything stays on this phone. No account, no cloud.</span></li>
         <li><span class="f-ico">${icon('lock')}</span><span><b>PIN protected</b>Only you can open it.</span></li>
@@ -1198,7 +1213,7 @@ function drawLock() {
       <div class="f-label">Currency</div>
       <div class="chip-row wrap">${CURRENCIES.map(c => `<button class="chip${store.s.currency === c ? ' on' : ''}" data-lock="cur" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
       ${store.data.accounts.map(a => `<label class="field"><span>${accIcon(a)} ${a.type === 'cash' ? 'Cash in hand' : a.type === 'card' ? `${esc(a.name)}: amount you owe` : `${esc(a.name)} balance`}</span>
-        <input class="input setup-bal" data-id="${a.id}" inputmode="decimal" data-money placeholder="0" autocomplete="off"></label>`).join('')}
+        <input class="input setup-bal" data-id="${esc(a.id)}" inputmode="decimal" data-money placeholder="0" autocomplete="off"></label>`).join('')}
       <div class="lock-bottom"><button class="btn gold block" data-lock="finish">Start using MyWallet</button></div>
     </div>`;
     return;
@@ -1222,7 +1237,7 @@ function drawLock() {
       <button class="key text" data-key="del" aria-label="Delete">${icon('backspace')}</button>
     </div>
   </div>`;
-  if (Date.now() < lock.until) startCooldown();
+  if (CHECK_MODES.includes(m) && pinWaitLeft() > 0) startCooldown();
 }
 
 function updateDots() {
@@ -1246,18 +1261,22 @@ function failPin(msg) {
   setTimeout(() => { lock.entry = ''; updateDots(); }, 380);
 }
 
+let cooldownTimer = 0;
 function startCooldown() {
+  clearTimeout(cooldownTimer);
   const tick = () => {
-    const left = Math.ceil((lock.until - Date.now()) / 1000);
+    if (!CHECK_MODES.includes(lock.mode)) return;
+    const left = Math.ceil(pinWaitLeft() / 1000);
     if (left <= 0) return lockMessage('Try again', false);
-    lockMessage(`Too many tries. Wait ${left}s.`);
-    setTimeout(tick, 500);
+    lockMessage(`Too many tries. Wait ${waitText(left)}.`);
+    cooldownTimer = setTimeout(tick, 500);
   };
   tick();
 }
 
 async function pinKey(k) {
-  if (lock.busy || !PIN_MODES.includes(lock.mode) || Date.now() < lock.until) return;
+  if (lock.busy || !PIN_MODES.includes(lock.mode)) return;
+  if (CHECK_MODES.includes(lock.mode) && pinWaitLeft() > 0) return startCooldown();
   if (k === 'del') lock.entry = lock.entry.slice(0, -1);
   else if (lock.entry.length < 4) lock.entry += k;
   updateDots();
@@ -1275,11 +1294,13 @@ async function pinComplete(pin) {
   const s = store.s;
   const next = (mode, msg = '') => { Object.assign(lock, { mode, entry: '', msg }); drawLock(); };
 
-  if (lock.mode === 'unlock' || lock.mode === 'verify') {
+  if (CHECK_MODES.includes(lock.mode)) {
+    // Count the try before checking it, so closing the app mid-check can't skip the wait.
+    s.pinFails += 1;
+    s.pinUntil = s.pinFails >= 5 ? Date.now() + pinWait(s.pinFails) : 0;
+    persist();
     if ((await hashPin(pin, s.pinSalt)) !== s.pinHash) {
-      if (++lock.attempts >= 5) {
-        lock.attempts = 0;
-        lock.until = Date.now() + 30000;
+      if (s.pinFails >= 5) {
         failPin('Too many tries.');
         setTimeout(startCooldown, 400);
       } else {
@@ -1287,7 +1308,9 @@ async function pinComplete(pin) {
       }
       return;
     }
-    lock.attempts = 0;
+    s.pinFails = 0;
+    s.pinUntil = 0;
+    persist();
     if (lock.mode === 'unlock') return finishLock();
     if (lock.purpose === 'disable') {
       s.pinHash = s.pinSalt = null;
@@ -1337,7 +1360,7 @@ function lockAction(action, el) {
     case 'finish': {
       for (const input of $$('.setup-bal')) {
         const v = input.value.trim() ? parseAmount(input.value) : 0;
-        if (Number.isNaN(v)) return formError(`.setup-bal[data-id="${input.dataset.id}"]`, 'Enter a valid amount');
+        if (Number.isNaN(v)) return formError(`.setup-bal[data-id="${CSS.escape(input.dataset.id)}"]`, 'Enter a valid amount');
         const acc = store.account(input.dataset.id);
         acc.opening = acc.type === 'card' ? -v : v; // a card balance is money owed
       }
@@ -1531,6 +1554,27 @@ function bindEvents() {
     } else if (!locked && store.s.autoLock > 0 && Date.now() - hiddenAt >= store.s.autoLock * 60000) {
       startLock('unlock');
     }
+  });
+
+  // The installed app and a Chrome tab share the same storage. When the other one
+  // saves, reload the data here so this window can't overwrite it with an old copy.
+  window.addEventListener('storage', e => {
+    if (e.storageArea !== localStorage || (e.key !== null && e.key !== store.KEY)) return;
+    const wasReady = !!store.data?.settings.onboarded;
+    store.load();
+    if (!wasReady || !store.data?.settings.onboarded) return location.reload();
+    $('#dialog-root .dlg-scrim')?.click(); // forms and dialogs may show old records
+    closeSheet();
+    if (ui.histAccount && !store.account(ui.histAccount)) ui.histAccount = null;
+    if (ui.histCategory && !store.category(ui.histCategory)) ui.histCategory = null;
+    applyTheme();
+    if (document.body.classList.contains('locked')) {
+      // PIN turned off in the other window: nothing left to unlock.
+      if (lock.purpose === 'unlock' && !store.s.pinHash) finishLock();
+      else if (CHECK_MODES.includes(lock.mode) && pinWaitLeft() > 0) startCooldown();
+      return;
+    }
+    render();
   });
 
   let resizeTimer;

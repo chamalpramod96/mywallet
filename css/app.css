@@ -473,13 +473,16 @@ body:has(.view input:focus) .tabbar { display: none; }
 body:has(#sheet-root.open) .toast, body.locked .toast { bottom: calc(env(safe-area-inset-bottom) + 90px); }
 
 /* ---------- lock screen ---------- */
-#lock { position: fixed; inset: 0; z-index: 60; overflow-y: auto; background: var(--bg); }
+#lock { position: fixed; inset: 0; z-index: 75; overflow-y: auto; background: var(--bg); } /* above dialogs, below toasts */
 .lock-inner { position: relative; max-width: 420px; min-height: 100dvh; margin: 0 auto; display: flex; flex-direction: column; padding: calc(env(safe-area-inset-top) + 28px) 24px calc(env(safe-area-inset-bottom) + 24px); }
 .lock-cancel { position: absolute; top: calc(env(safe-area-inset-top) + 12px); right: 12px; }
 .lock-brand { display: flex; flex-direction: column; align-items: center; margin-top: 6vh; }
 .lock-brand.sm { margin-top: 3vh; }
 .lock-brand.row { align-items: flex-start; margin: 0 0 24px; }
 .lock-tag { margin-top: 10px; color: var(--ink-2); font-size: 16px; text-align: center; }
+.lock-warn { display: flex; gap: 10px; align-items: flex-start; margin-top: 4vh; padding: 12px; border-radius: 14px; font-size: 13.5px; color: var(--ink-2); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
+.lock-warn .ic { flex: none; width: 20px; height: 20px; color: var(--danger); }
+.lock-warn b { color: var(--ink); }
 .features { list-style: none; margin: 6vh 0 24px; padding: 0; display: grid; gap: 16px; }
 .features li { display: flex; gap: 14px; align-items: flex-start; color: var(--ink-2); font-size: 14px; }
 .features b { display: block; color: var(--ink); font-size: 15px; }
