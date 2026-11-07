@@ -1,5 +1,5 @@
 // Offline support. Bump VERSION whenever you change any file, so the phone picks up the update.
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 const CACHE = `mywallet-${VERSION}`;
 const ASSETS = [
   './',

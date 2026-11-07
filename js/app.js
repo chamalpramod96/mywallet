@@ -148,6 +148,26 @@ function accBalance(a, bal) {
   return { text: money(bal), note: bal > 0 ? 'In credit' : 'Nothing owed' };
 }
 
+/* A transfer is named by what it does, so paying the card and taking out cash read clearly.
+   Transfers never count as income or spending: card purchases count when you make them. */
+const TRANSFER_KINDS = {
+  'card-pay': 'Card payment',
+  'card-cash': 'Card cash withdrawal',
+  'cash-out': 'Cash withdrawal',
+  'cash-in': 'Cash deposit',
+  move: 'Transfer',
+};
+function transferKind(from, to) {
+  if (!from || !to) return 'move'; // "To" not picked yet
+  if (to.type === 'card' && from.type !== 'card') return 'card-pay';
+  if (from?.type === 'card' && to?.type === 'cash') return 'card-cash';
+  if (to?.type === 'cash') return 'cash-out';
+  if (from?.type === 'cash') return 'cash-in';
+  return 'move';
+}
+const transferTitle = t => TRANSFER_KINDS[transferKind(store.account(t.accountId), store.account(t.toAccountId))];
+const txLabel = t => (t.type === 'transfer' ? transferTitle(t) : TX_LABELS[t.type]);
+
 function txRow(t, { showDate = false } = {}) {
   const acc = store.account(t.accountId);
   const note = t.note ? ` · ${esc(t.note)}` : '';
@@ -156,7 +176,7 @@ function txRow(t, { showDate = false } = {}) {
     const to = store.account(t.toAccountId);
     return `<li><button class="tx" data-action="edit-tx" data-id="${esc(t.id)}">
       <span class="tx-ico transfer">${icon('swap')}</span>
-      <span class="tx-main"><span class="tx-title">Transfer</span><span class="tx-sub">${when}${esc(acc?.name ?? '?')} → ${esc(to?.name ?? '?')}${note}</span></span>
+      <span class="tx-main"><span class="tx-title">${transferTitle(t)}</span><span class="tx-sub">${when}${esc(acc?.name ?? '?')} → ${esc(to?.name ?? '?')}${note}</span></span>
       <span class="tx-amt">${money(t.amount)}</span>
     </button></li>`;
   }
@@ -323,7 +343,7 @@ function histItems() {
     if (ui.histCategory && t.categoryId !== ui.histCategory) return false;
     if (q) {
       const hay = [t.note, store.category(t.categoryId)?.name, store.account(t.accountId)?.name,
-        store.account(t.toAccountId)?.name, String(t.amount / 100), t.type === 'transfer' ? 'transfer' : ''].join(' ').toLowerCase();
+        store.account(t.toAccountId)?.name, String(t.amount / 100), t.type === 'transfer' ? `transfer ${transferTitle(t)}` : ''].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -638,11 +658,62 @@ function readTxInputs() {
   f.note = $('#f-note')?.value ?? f.note;
 }
 
+// One-tap picks for the usual card and cash moves (only those whose accounts exist).
+function transferShortcuts() {
+  const accs = store.data.accounts;
+  const card = accs.find(a => a.type === 'card');
+  const cash = accs.find(a => a.type === 'cash');
+  const bank = accs.find(a => a.type === 'bank') || accs.find(a => a.type === 'savings');
+  return [
+    card && bank && { key: 'pay', kind: 'card-pay', label: '💳 Pay credit card', from: bank, to: card },
+    card && cash && { key: 'card-cash', kind: 'card-cash', label: '💵 Cash from card', from: card, to: cash },
+    bank && cash && { key: 'atm', kind: 'cash-out', label: '🏧 Cash from bank', from: bank, to: cash },
+  ].filter(Boolean);
+}
+
+// Says how the transaction changes your balances, mainly for the credit card.
+function txHint(f) {
+  const from = store.account(f.accountId), to = store.account(f.toAccountId);
+  const n = a => `<b>${esc(a.name)}</b>`;
+  if (f.type !== 'transfer') {
+    if (from?.type !== 'card') return '';
+    return f.type === 'expense'
+      ? `Adds to what you owe on ${n(from)}. Counted as spending now, not again when you pay the card.`
+      : `Lowers what you owe on ${n(from)}, e.g. a refund.`;
+  }
+  if (!from || !to || from.id === to.id) return '';
+  switch (transferKind(from, to)) {
+    case 'card-pay': return `Lowers what you owe on ${n(to)}. Not counted as spending, because the card purchases already were.`;
+    case 'card-cash': return `Adds to what you owe on ${n(from)} and to your cash in hand. Not counted as spending. If the bank charges a fee, add it as an expense from ${n(from)}.`;
+    case 'cash-out': return `Moves money from ${n(from)} to your cash in hand. Not counted as spending.`;
+    case 'cash-in': return `Moves cash in hand into ${n(to)}.`;
+    default: return from.type === 'card' ? `Adds to what you owe on ${n(from)}.` : 'Moves money between your accounts. Not counted as spending.';
+  }
+}
+
+const txSaveLabel = () => (txf.editing ? 'Save changes' : `Add ${txLabel(txf.f).toLowerCase()}`);
+
+// Updates the parts that depend on the picked accounts without redrawing the form.
+function refreshTxForm() {
+  const f = txf.f;
+  const kind = transferKind(store.account(f.accountId), store.account(f.toAccountId));
+  $$('[data-group="tx-quick"] .chip').forEach(b => b.classList.toggle('on', !!f.toAccountId && b.dataset.kind === kind));
+  for (const [group, id] of [['tx-acc', f.accountId], ['tx-to', f.toAccountId]]) {
+    $$(`[data-group="${group}"] .chip`).forEach(b => b.classList.toggle('on', b.dataset.id === id));
+  }
+  const hint = $('#tx-hint');
+  if (hint) hint.innerHTML = txHint(f);
+  const save = $('#tx-save');
+  if (save) save.textContent = txSaveLabel();
+}
+
 function drawTxForm(focus = false) {
   const { f, editing } = txf;
   const accChips = (sel, action) => store.data.accounts.map(a =>
     `<button class="chip${sel === a.id ? ' on' : ''}" data-action="${action}" data-id="${esc(a.id)}">${accIcon(a)} ${esc(a.name)}</button>`).join('');
   const today = todayStr(), yest = addDays(today, -1);
+  const quick = transferShortcuts();
+  const kind = transferKind(store.account(f.accountId), store.account(f.toAccountId));
   openSheet(`${sheetHead(editing ? 'Edit transaction' : 'New transaction')}
   <div class="sheet-body">
     <div class="seg">${Object.entries(TX_LABELS).map(([k, l]) =>
@@ -654,9 +725,12 @@ function drawTxForm(focus = false) {
     ${f.type === 'transfer' ? '' : `<div class="f-label">Category</div>
     <div class="cat-grid">${store.categoriesOf(f.type).map(c =>
       `<button class="cat${f.categoryId === c.id ? ' on' : ''}" data-action="tx-cat" data-id="${esc(c.id)}"><span class="cat-emoji">${esc(c.emoji)}</span><span class="cat-name">${esc(c.name)}</span></button>`).join('')}</div>`}
+    ${f.type === 'transfer' && quick.length ? `<div class="f-label">Quick pick</div>
+    <div class="chip-row wrap" data-group="tx-quick">${quick.map(q => `<button class="chip${f.toAccountId && q.kind === kind ? ' on' : ''}" data-action="tx-quick" data-k="${q.key}" data-kind="${q.kind}">${q.label}</button>`).join('')}</div>` : ''}
     <div class="f-label">${f.type === 'transfer' ? 'From' : 'Account'}</div>
     <div class="chip-row" data-group="tx-acc">${accChips(f.accountId, 'tx-acc')}</div>
     ${f.type === 'transfer' ? `<div class="f-label">To</div><div class="chip-row" data-group="tx-to">${accChips(f.toAccountId, 'tx-to')}</div>` : ''}
+    <p class="hint tx-hint" id="tx-hint">${txHint(f)}</p>
     <div class="f-label">Date</div>
     <div class="date-row">
       <button class="chip${f.date === today ? ' on' : ''}" data-action="tx-day" data-d="${today}">Today</button>
@@ -667,7 +741,7 @@ function drawTxForm(focus = false) {
   </div>
   <div class="sheet-foot">
     ${editing ? `<button class="btn ghost icon-only" data-action="tx-delete" aria-label="Delete transaction">${icon('trash')}</button>` : ''}
-    <button class="btn primary grow" data-action="tx-save">${editing ? 'Save changes' : `Add ${TX_LABELS[f.type].toLowerCase()}`}</button>
+    <button class="btn primary grow" data-action="tx-save" id="tx-save">${txSaveLabel()}</button>
   </div>`, { focus: focus ? '#f-amount' : null });
 }
 
@@ -702,7 +776,7 @@ function saveTx() {
   if (!persist()) return;
   closeSheet();
   render();
-  toast(editing ? 'Changes saved' : `${TX_LABELS[f.type]} of ${money(amount, { mask: false })} added`);
+  toast(editing ? 'Changes saved' : `${txLabel(rec)} of ${money(amount, { mask: false })} added`);
 }
 
 async function deleteTx() {
@@ -1418,8 +1492,20 @@ const ACTIONS = {
     drawTxForm();
   },
   'tx-cat': el => { txf.f.categoryId = el.dataset.id; selectIn(el); },
-  'tx-acc': el => { txf.f.accountId = el.dataset.id; selectIn(el); },
-  'tx-to': el => { txf.f.toAccountId = el.dataset.id; selectIn(el); },
+  'tx-acc': el => { txf.f.accountId = el.dataset.id; refreshTxForm(); },
+  'tx-to': el => { txf.f.toAccountId = el.dataset.id; refreshTxForm(); },
+  'tx-quick': el => {
+    const q = transferShortcuts().find(x => x.key === el.dataset.k);
+    if (!q) return;
+    const f = txf.f;
+    const cur = store.account(f.accountId);
+    // Paying the card or taking cash from the bank: keep a bank you already picked (e.g. BOC).
+    const keepBank = q.from.type !== 'card' && ['bank', 'savings', 'ewallet'].includes(cur?.type);
+    f.accountId = keepBank ? cur.id : q.from.id;
+    f.toAccountId = q.to.id;
+    refreshTxForm();
+    for (const g of ['tx-acc', 'tx-to']) $(`[data-group="${g}"] .chip.on`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  },
   'tx-day': el => {
     txf.f.date = el.dataset.d;
     $('#f-date').value = el.dataset.d;

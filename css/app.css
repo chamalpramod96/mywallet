@@ -436,6 +436,9 @@ body:has(.view input:focus) .tabbar { display: none; }
 .sign-btn { flex: none; width: 48px; height: 100%; border-left: 1px solid var(--line); color: var(--ink-2); font-size: 20px; font-weight: 600; }
 .hint { margin: 10px 2px 0; color: var(--muted); font-size: 12.5px; }
 .hint.top { margin: 0 2px 4px; text-align: center; }
+.tx-hint { line-height: 1.45; }
+.tx-hint:empty { display: none; }
+.tx-hint b { color: var(--ink-2); font-weight: 700; }
 .cat-preview { width: 76px; height: 76px; margin: 4px auto 0; border-radius: 24px; background: var(--surface-2); display: grid; place-items: center; font-size: 38px; }
 .emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
 .emo { aspect-ratio: 1; border-radius: 10px; font-size: 21px; border: 2px solid transparent; }

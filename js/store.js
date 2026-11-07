@@ -1,6 +1,6 @@
 // Data layer: everything lives in this phone's localStorage. Amounts are integer cents.
 const KEY = 'mywallet.v1';
-export const APP_VERSION = '1.1.1';
+export const APP_VERSION = '1.1.2';
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
