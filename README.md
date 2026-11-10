@@ -43,6 +43,10 @@ Your data lives only in the phone's browser storage. You lose it if you uninstal
 
 The app reminds you on the Home screen if you haven't backed up for 30 days.
 
+**Earlier versions.** The app keeps a copy of your data on the phone each day and before big changes. If data goes missing, open **Settings → Earlier versions** and tap a copy to go back to it. If the saved data is gone completely, the welcome screen offers **Bring my data back**. These copies are on the same phone, so they don't replace a backup file.
+
+**Always open MyWallet the same way**, from its home-screen icon. Each browser (Chrome, Samsung Internet, Incognito or Secret tabs) keeps its own separate data, so opening the link in another browser shows an empty wallet.
+
 ## Updating the app
 
 1. Change the files you want.

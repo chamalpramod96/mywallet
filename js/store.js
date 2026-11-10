@@ -1,6 +1,6 @@
 // Data layer: everything lives in this phone's localStorage. Amounts are integer cents.
 const KEY = 'mywallet.v1';
-export const APP_VERSION = '1.1.2';
+export const APP_VERSION = '1.1.3';
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -179,6 +179,19 @@ export function validateBackup(obj) {
 }
 
 /* ---------- store ---------- */
+const SNAP = `${KEY}.snap-`;
+const SNAP_KEEP = 7;
+// Characters for the data plus its earlier versions; browsers allow about 5 million.
+const SNAP_BUDGET = 3.5e6;
+const isFull = e => e?.name === 'QuotaExceededError' || e?.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e?.code === 22 || e?.code === 1014;
+export const SNAP_REASONS = {
+  daily: 'Daily copy',
+  start: 'Before starting again',
+  restore: 'Before restoring a backup',
+  undo: 'Before going back to an earlier version',
+  shrink: 'Before many transactions were removed',
+};
+
 export const store = {
   data: null,
   KEY,
@@ -220,18 +233,110 @@ export const store = {
   },
 
   save() {
+    const json = JSON.stringify(this.data);
     try {
-      localStorage.setItem(KEY, JSON.stringify(this.data));
-      return true;
+      this.autoSnapshot(json);
     } catch (e) {
-      console.error('Could not save', e);
+      console.warn('Could not keep an earlier version', e);
+    }
+    for (;;) {
+      try {
+        localStorage.setItem(KEY, json);
+        return true;
+      } catch (e) {
+        // Storage full: older earlier versions make room, but the newest one always stays.
+        if (isFull(e) && this.dropOldestSnapshot(1)) continue;
+        console.error('Could not save', e);
+        return false;
+      }
+    }
+  },
+
+  // True if this browser lets MyWallet save (private tabs or blocked storage don't).
+  canSave() {
+    try {
+      localStorage.setItem(`${KEY}.test`, '1');
+      localStorage.removeItem(`${KEY}.test`);
+      return true;
+    } catch {
       return false;
     }
   },
 
   create() {
+    this.snapshot('start'); // keep anything that was already here
     this.data = defaultData();
     this.save();
+  },
+
+  /* ---------- earlier versions ----------
+     The saved data is copied to "mywallet.v1.snap-<time>-<reason>" before the first save of
+     each day and before big changes. The newest few are kept so a loss can be undone. */
+  snapshots() {
+    try {
+      return Object.keys(localStorage).filter(k => k.startsWith(SNAP))
+        .map(key => {
+          const [time, reason] = key.slice(SNAP.length).split('-');
+          return { key, time: Number(time), reason: SNAP_REASONS[reason] ? reason : 'daily' };
+        })
+        .filter(x => Number.isFinite(x.time))
+        .sort((a, b) => b.time - a.time);
+    } catch {
+      return [];
+    }
+  },
+
+  // One earlier version, checked like a backup; null if it can't be read.
+  readSnapshot(key) {
+    try {
+      const d = JSON.parse(localStorage.getItem(key));
+      return d && typeof d === 'object' && Array.isArray(d.accounts) ? normalize(d) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  snapshot(reason, raw = localStorage.getItem(KEY)) {
+    if (!raw) return false;
+    const newest = this.snapshots()[0];
+    if (newest && localStorage.getItem(newest.key) === raw) return true; // already kept
+    const key = `${SNAP}${Date.now()}-${reason}`;
+    for (;;) {
+      try {
+        localStorage.setItem(key, raw);
+        break;
+      } catch (e) {
+        if (!isFull(e) || !this.dropOldestSnapshot()) return false;
+      }
+    }
+    // Keep the newest few, within the size budget. The newest one is always kept.
+    let size = localStorage.getItem(KEY)?.length || 0;
+    this.snapshots().forEach((sn, i) => {
+      size += localStorage.getItem(sn.key)?.length || 0;
+      if (i > 0 && (i >= SNAP_KEEP || size > SNAP_BUDGET)) localStorage.removeItem(sn.key);
+    });
+    return true;
+  },
+
+  dropOldestSnapshot(keep = 0) {
+    const all = this.snapshots();
+    if (all.length <= keep) return false;
+    localStorage.removeItem(all[all.length - 1].key);
+    return true;
+  },
+
+  // Before the first save of the day, and before a save that removes most transactions
+  // (for example an old copy of the app writing over newer data), keep what was saved.
+  autoSnapshot(json) {
+    const raw = localStorage.getItem(KEY);
+    if (!raw || raw === json) return;
+    const newest = this.snapshots()[0];
+    if (!newest || dateStr(new Date(newest.time)) !== todayStr()) {
+      this.snapshot('daily', raw);
+      return;
+    }
+    const before = JSON.parse(raw).tx?.length || 0;
+    if (before >= 5 && this.data.tx.length < before / 2) this.snapshot('shrink', raw);
   },
 
   wipe() {

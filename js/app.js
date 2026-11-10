@@ -1,6 +1,6 @@
 import {
   store, uid, todayStr, dateStr, thisYm, ymOf, addDays, addMonths, daysInMonth,
-  parseAmount, ACCOUNT_TYPES, APP_VERSION, validateBackup,
+  parseAmount, ACCOUNT_TYPES, APP_VERSION, validateBackup, SNAP_REASONS,
 } from './store.js';
 import { esc, money, plain, amountStr, monthLabel, dayLabel, curPrefix } from './format.js';
 import { icon } from './icons.js';
@@ -73,8 +73,11 @@ function applyTheme() {
 darkMq.addEventListener('change', applyTheme);
 
 /* ---------- small helpers ---------- */
+let storageOk = true; // false when this browser won't keep MyWallet's data
+
 function persist() {
   if (store.save()) return true;
+  storageOk = false;
   toast('Could not save. Phone storage may be full.');
   return false;
 }
@@ -216,6 +219,25 @@ function backupNudge() {
   </div>`;
 }
 
+// Data lives in one browser on this phone, so say so when it might not be kept or found again.
+function saveWarning() {
+  if (storageOk) return '';
+  return `<div class="banner warn">
+    <span class="banner-ico">${icon('alert')}</span>
+    <p><b>MyWallet can't save here</b>Anything you add will be lost when you close it. Private or Secret tabs don't keep data. Open MyWallet in normal Chrome or from its home-screen icon.</p>
+  </div>`;
+}
+
+function tabNotice() {
+  if (isStandalone() || ui.tabNoticeHidden) return '';
+  return `<div class="banner">
+    <span class="banner-ico">${icon('info')}</span>
+    <p><b>Open MyWallet from its icon</b>Each browser (Chrome, Samsung Internet, private tabs) keeps its own separate MyWallet data. Use the home-screen icon to always see the same data.</p>
+    <button class="btn sm gold" data-action="install">Install</button>
+    <button class="icon-btn sm" data-action="tab-notice-hide" aria-label="Dismiss">${icon('x')}</button>
+  </div>`;
+}
+
 /* =====================================================================
    Views
    ===================================================================== */
@@ -232,6 +254,7 @@ function viewHome() {
       ${s.pinHash ? `<button class="icon-btn framed" data-action="lock-now" aria-label="Lock now">${icon('lock')}</button>` : ''}
     </div>
   </header>
+  ${saveWarning()}
 
   <section class="hero">
     ${HERO_WAVE}
@@ -244,6 +267,7 @@ function viewHome() {
     ${budgetMeter(expense)}
   </section>
 
+  ${tabNotice()}
   ${backupNudge()}
 
   <section class="block">
@@ -468,6 +492,7 @@ function viewSettings() {
     row({ action: 'backup-download', ico: icon('download'), label: 'Download backup', sub: last }),
     canShareFiles() ? row({ action: 'backup-share', ico: icon('share'), label: 'Share backup', sub: 'Save to Google Drive, WhatsApp, email' }) : '',
     row({ action: 'backup-import', ico: icon('upload'), label: 'Restore from backup' }),
+    row({ action: 'open-versions', ico: icon('history'), label: 'Earlier versions', sub: 'Go back if data went missing', val: store.snapshots().length || '' }),
     row({ action: 'export-csv', ico: icon('table'), label: 'Export as CSV', sub: 'Open in Excel or Google Sheets' }),
   ])}
   ${isStandalone() ? '' : group('App', [
@@ -479,7 +504,7 @@ function viewSettings() {
   <div class="about">
     ${brand('sm')}
     <p>Version ${APP_VERSION} · <span id="persist-status"></span></p>
-    <p>Your data is stored only on this phone.</p>
+    <p>Your data is stored only on this phone, in this browser.</p>
   </div>`;
 }
 
@@ -1166,17 +1191,59 @@ function importBackup() {
       danger: true,
     });
     if (!ok) return;
-    const { pinHash, pinSalt, pinFails, pinUntil } = store.s;
-    const keep = { pinHash, pinSalt, pinFails, pinUntil, onboarded: true };
-    store.data = data;
-    Object.assign(store.s, keep);
-    Object.assign(ui, { histAccount: null, histCategory: null, histQuery: '' });
-    if (!persist()) return;
-    applyTheme();
-    render();
+    store.snapshot('restore');
+    replaceData(data);
     toast('Backup restored');
   };
   input.click();
+}
+
+// Swaps in restored data, keeping this phone's PIN.
+function replaceData(data) {
+  const { pinHash, pinSalt, pinFails, pinUntil } = store.s;
+  store.data = data;
+  Object.assign(store.s, { pinHash, pinSalt, pinFails, pinUntil, onboarded: true });
+  Object.assign(ui, { histAccount: null, histCategory: null, histQuery: '' });
+  if (!persist()) return false;
+  applyTheme();
+  render();
+  return true;
+}
+
+const snapWhen = time => {
+  const d = new Date(time);
+  return `${dayLabel(dateStr(d))}, ${d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+};
+
+function openVersions() {
+  const rows = store.snapshots().map(sn => {
+    const d = store.readSnapshot(sn.key);
+    const sub = d
+      ? `${SNAP_REASONS[sn.reason]} · ${d.tx.length} transaction${d.tx.length === 1 ? '' : 's'}, ${d.loans.length} loan${d.loans.length === 1 ? '' : 's'}`
+      : 'This copy can\'t be read';
+    return row({ action: 'snap-restore', id: sn.key, ico: icon('history'), label: snapWhen(sn.time), sub });
+  });
+  openSheet(`${sheetHead('Earlier versions')}
+  <div class="sheet-body">
+    <p class="hint top">MyWallet keeps a copy on this phone each day and before big changes, like restoring a backup. Tap one to go back to it.</p>
+    ${rows.length ? `<ul class="list card">${rows.join('')}</ul>` : '<p class="empty-row">No earlier versions yet. The first copy is kept the next time you save something.</p>'}
+    <p class="hint">These copies are cleared if you erase all data or clear Chrome's site data. Keep a backup file in Google Drive too.</p>
+  </div>`);
+}
+
+async function restoreSnapshot(key) {
+  const data = store.readSnapshot(key);
+  const sn = store.snapshots().find(x => x.key === key);
+  if (!data || !sn) return toast('That copy can\'t be read');
+  const ok = await confirmDialog({
+    title: 'Go back to this version?',
+    message: `Your data will go back to ${esc(snapWhen(sn.time))} (${data.tx.length} transactions). What you have now (${store.data.tx.length} transactions) is kept as an earlier version, so you can undo this. Your PIN stays the same.`,
+    ok: 'Go back',
+  });
+  if (!ok) return;
+  store.snapshot('undo');
+  closeSheet();
+  if (replaceData(data)) toast('Earlier version restored');
 }
 
 function exportCsv() {
@@ -1193,7 +1260,7 @@ function exportCsv() {
 async function eraseAll() {
   const ok = await confirmDialog({
     title: 'Erase everything?',
-    message: 'All accounts, transactions and your PIN will be deleted from this phone. Download a backup first if you might need it.',
+    message: 'All accounts, transactions, earlier versions and your PIN will be deleted from this phone. Download a backup first if you might need it.',
     ok: 'Erase',
     danger: true,
   });
@@ -1266,15 +1333,22 @@ function drawLock() {
     ? `<button class="icon-btn lock-cancel" data-lock="cancel" aria-label="Cancel">${icon('x')}</button>` : '';
 
   if (m === 'welcome') {
+    const found = foundData();
+    const notice = found
+      ? `<p class="lock-warn found">${icon('history')}<span><b>Your earlier data is still on this phone</b>Saved ${esc(snapWhen(found.time))}, with ${found.data.tx.length} transaction${found.data.tx.length === 1 ? '' : 's'}. Later you can pick a different copy in Settings → Earlier versions.</span></p>`
+      : store.corrupt ? `<p class="lock-warn">${icon('alert')}<span>Your saved data couldn't be read. A copy was kept on this phone. To bring your data back, tap Get started, then <b>Settings → Restore from backup</b>.</span></p>` : '';
     el.innerHTML = `<div class="lock-inner">
       <div class="lock-brand">${brand('lg')}<p class="lock-tag">Your money, always in your pocket.</p></div>
-      ${store.corrupt ? `<p class="lock-warn">${icon('alert')}<span>Your saved data couldn't be read. A copy was kept on this phone. To bring your data back, tap Get started, then <b>Settings → Restore from backup</b>.</span></p>` : ''}
-      <ul class="features">
+      ${notice}
+      ${found ? '' : `<ul class="features">
         <li><span class="f-ico">${icon('shield')}</span><span><b>Private</b>Everything stays on this phone. No account, no cloud.</span></li>
         <li><span class="f-ico">${icon('lock')}</span><span><b>PIN protected</b>Only you can open it.</span></li>
         <li><span class="f-ico">${icon('offline')}</span><span><b>Works offline</b>Add expenses anywhere, any time.</span></li>
-      </ul>
-      <div class="lock-bottom"><button class="btn gold block" data-lock="start">Get started</button></div>
+      </ul>`}
+      <div class="lock-bottom">
+        ${found ? `<button class="btn gold block" data-lock="restore-found" data-snap="${esc(found.key)}">Bring my data back</button>` : ''}
+        <button class="btn ${found ? 'ghost' : 'gold'} block" data-lock="start">${found ? 'Start fresh instead' : 'Get started'}</button>
+      </div>
     </div>`;
     return;
   }
@@ -1415,9 +1489,31 @@ async function pinComplete(pin) {
   }
 }
 
+// Newest readable earlier version from a finished setup, offered on the welcome screen.
+function foundData() {
+  for (const sn of store.snapshots()) {
+    const data = store.readSnapshot(sn.key);
+    if (data?.settings.onboarded) return { ...sn, data };
+  }
+  return null;
+}
+
 function lockAction(action, el) {
   switch (action) {
+    case 'restore-found': {
+      const data = store.readSnapshot(el.dataset.snap);
+      if (!data) return toast('That copy can\'t be read');
+      store.data = data;
+      store.s.onboarded = true;
+      if (!persist()) return;
+      location.reload(); // opens like normal: asks for the PIN saved with that data
+      break;
+    }
     case 'start':
+      // Another window may have set MyWallet up while this one showed the welcome screen:
+      // never start over on top of saved data.
+      store.load();
+      if (store.data?.settings.onboarded) return location.reload();
       store.create();
       applyTheme();
       lock.mode = 'create';
@@ -1577,6 +1673,9 @@ const ACTIONS = {
   'backup-download': exportBackup,
   'backup-share': shareBackup,
   'backup-import': importBackup,
+  'open-versions': openVersions,
+  'snap-restore': el => restoreSnapshot(el.dataset.id),
+  'tab-notice-hide': () => { ui.tabNoticeHidden = true; render(); },
   'export-csv': exportCsv,
   'install': install,
   'erase': eraseAll,
@@ -1706,6 +1805,7 @@ function registerSW() {
 
 function boot() {
   $$('[data-icon]').forEach(s => { s.outerHTML = icon(s.dataset.icon); });
+  storageOk = store.canSave();
   store.load();
   applyTheme();
   bindEvents();
